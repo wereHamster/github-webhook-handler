@@ -37,6 +37,7 @@ library
    , text
    , vector
    , cryptohash
+   , uuid
 
   exposed-modules:
      GitHub.WebHook.Handler

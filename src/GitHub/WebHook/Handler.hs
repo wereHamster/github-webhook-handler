@@ -21,6 +21,8 @@ import           Data.Text.Encoding
 import           Data.ByteString
 import qualified Data.ByteString.Char8 as BC8
 
+import           Data.UUID
+
 import           GitHub.Types
 
 
@@ -36,23 +38,41 @@ data Handler m = Handler
       -- ^ Action which is used to retrieve a particular header from the
       -- request.
 
-    , hAction :: Either Error Event -> m ()
+    , hAction :: Either Error (UUID, Event) -> m ()
       -- ^ Action which is executed once we've processed all the information
-      -- in the request.
+      -- in the request. GitHub includes a unique UUID in each request.
     }
 
 
 data Error
     = InvalidRequest
+      -- ^ The incoming request is not well-formed. If that happens it means
+      -- GitHub screwed something up, or changed the format of the request.
+
     | ParseError !Text
+      -- ^ The request looks valid but we failed to parse the payload. This
+      -- could be because our parsing code is wrong, or because GitHub added
+      -- a new event type which we don't handle yet.
+
     | UnsignedRequest
+      -- ^ We were expecting a signed request but no signature was included.
+      -- Such requests are rejected beause we don't want to accept requests from
+      -- untrusted sources.
+
     | InvalidSignature
+      -- ^ A signature was included in the request but it did not match the
+      -- secret key which was providid to the handler. Usually points to
+      -- a configuration error on either end.
+
 
 toParseError :: String -> Either Error Event
 toParseError = Left . ParseError . T.pack
 
+
 runHandler :: Monad m => Handler m -> m ()
 runHandler h = do
+    mbDelivery <- return . (fromASCIIBytes =<<) =<< hHeader h "X-GitHub-Delivery"
+
     res <- do
         rawBody     <- hBody h
         mbSignature <- hHeader h "X-Hub-Signature"
@@ -87,4 +107,6 @@ runHandler h = do
                 Right value -> either toParseError Right $
                     parseEither (eventParser $ decodeUtf8 eventName) value
 
-    hAction h res
+    hAction h $ case mbDelivery of
+        Nothing -> Left InvalidRequest
+        Just uuid -> fmap ((,) uuid) res
