@@ -38,7 +38,7 @@ data Handler m = Handler
       -- ^ Action which is used to retrieve a particular header from the
       -- request.
 
-    , hAction :: Either Error (UUID, Event) -> m ()
+    , hAction :: Either Error (UUID, Payload) -> m ()
       -- ^ Action which is executed once we've processed all the information
       -- in the request. GitHub includes a unique UUID in each request.
     }
@@ -65,7 +65,7 @@ data Error
       -- a configuration error on either end.
 
 
-toParseError :: String -> Either Error Event
+toParseError :: String -> Either Error Payload
 toParseError = Left . ParseError . T.pack
 
 
@@ -105,7 +105,7 @@ runHandler h = do
             case eitherDecodeStrict' body of
                 Left e -> toParseError e
                 Right value -> either toParseError Right $
-                    parseEither (eventParser $ decodeUtf8 eventName) value
+                    parseEither (webhookPayloadParser $ decodeUtf8 eventName) value
 
     hAction h $ case mbDelivery of
         Nothing -> Left InvalidRequest

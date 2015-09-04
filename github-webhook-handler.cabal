@@ -31,7 +31,7 @@ library
   build-depends:
      base >=4 && <4.9
    , bytestring
-   , github-types
+   , github-types >=0.2 && <1
    , transformers
    , aeson
    , text
