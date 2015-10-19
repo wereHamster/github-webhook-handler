@@ -14,11 +14,11 @@ import           Data.Aeson.Types (parseEither)
 
 import           Data.Monoid
 
-import           Data.Text
+import           Data.Text hiding (any)
 import qualified Data.Text as T
 import           Data.Text.Encoding
 
-import           Data.ByteString
+import           Data.ByteString       hiding (any)
 import qualified Data.ByteString.Char8 as BC8
 
 import           Data.UUID
@@ -28,8 +28,12 @@ import           GitHub.Types
 
 
 data Handler m = Handler
-    { hSecretKey :: Maybe String
-      -- ^ Optional key which is used to authenticate the incoming request.
+    { hSecretKeys :: [String]
+      -- ^ Secret keys which are used to authenticate the incoming request.
+      -- If the list is empty then no authentication is required. The handler
+      -- tries each key until it finds one which works. This makes it easier
+      -- to rotate keys because you can have multiple ones active at any given
+      -- point in time.
 
     , hBody :: m ByteString
       -- ^ Action which is used to read the request body.
@@ -69,6 +73,11 @@ toParseError :: String -> Either Error Payload
 toParseError = Left . ParseError . T.pack
 
 
+verifySecretKey :: ByteString -> ByteString -> String -> Bool
+verifySecretKey rawBody sig key = sig == ("sha1=" <> digestToHexByteString
+    (hmacGetDigest (hmac (BC8.pack key) rawBody :: HMAC SHA1)))
+
+
 runHandler :: Monad m => Handler m -> m ()
 runHandler h = do
     mbDelivery <- return . (fromASCIIBytes =<<) =<< hHeader h "X-GitHub-Delivery"
@@ -77,24 +86,24 @@ runHandler h = do
         rawBody     <- hBody h
         mbSignature <- hHeader h "X-Hub-Signature"
 
-        authenticatedBody <- return $ case (hSecretKey h, mbSignature) of
+        authenticatedBody <- return $ case (hSecretKeys h, mbSignature) of
 
             -- No secret key and no signature. Pass along the body unverified.
-            (Nothing, Nothing) -> Right rawBody
+            ([], Nothing) -> Right rawBody
 
-            -- Signature is available but no secret key to verify it. This is
+            -- Signature is available but no secret keys to verify it. This is
             -- not a fatal error, we can still process the event.
-            (Nothing, Just _) -> Right rawBody
+            ([], Just _) -> Right rawBody
 
-            -- Secret token is available but the request is not signed. Reject
+            -- Secret keys are available but the request is not signed. Reject
             -- the request.
-            (Just _, Nothing) -> Left UnsignedRequest
+            (_, Nothing) -> Left UnsignedRequest
 
-            -- Both the signature and secret token are available. Verify the
-            -- signature and reject the request if that fails.
-            (Just sc, Just sig) -> do
-                let mac = hmac (BC8.pack sc) rawBody :: HMAC SHA1
-                if sig == ("sha1=" <> digestToHexByteString (hmacGetDigest mac))
+            -- Both the signature and secret keys are available. Verify the
+            -- signature with the first key which works, otherwise reject the
+            -- request.
+            (secretKeys, Just sig) -> do
+                if any (verifySecretKey rawBody sig) secretKeys
                     then Right rawBody
                     else Left InvalidSignature
 
