@@ -41,10 +41,6 @@ data Handler m = Handler
     , hHeader :: ByteString -> m (Maybe ByteString)
       -- ^ Action which is used to retrieve a particular header from the
       -- request.
-
-    , hAction :: Either Error (UUID, Payload) -> m ()
-      -- ^ Action which is executed once we've processed all the information
-      -- in the request. GitHub includes a unique UUID in each request.
     }
 
 
@@ -78,15 +74,15 @@ verifySecretKey rawBody sig key = sig == ("sha1=" <> digestToHexByteString
     (hmacGetDigest (hmac (BC8.pack key) rawBody :: HMAC SHA1)))
 
 
-runHandler :: Monad m => Handler m -> m ()
+runHandler :: Monad m => Handler m -> m (Either Error (UUID, Payload))
 runHandler h = do
-    mbDelivery <- return . (fromASCIIBytes =<<) =<< hHeader h "X-GitHub-Delivery"
+    mbDelivery <- pure . (fromASCIIBytes =<<) =<< hHeader h "X-GitHub-Delivery"
 
     res <- do
         rawBody     <- hBody h
         mbSignature <- hHeader h "X-Hub-Signature"
 
-        authenticatedBody <- return $ case (hSecretKeys h, mbSignature) of
+        authenticatedBody <- pure $ case (hSecretKeys h, mbSignature) of
 
             -- No secret key and no signature. Pass along the body unverified.
             ([], Nothing) -> Right rawBody
@@ -108,7 +104,7 @@ runHandler h = do
                     else Left InvalidSignature
 
         mbEventName <- hHeader h "X-GitHub-Event"
-        return $ do
+        pure $ do
             eventName <- maybe (Left InvalidRequest) Right mbEventName
             body      <- authenticatedBody
             case eitherDecodeStrict' body of
@@ -116,6 +112,6 @@ runHandler h = do
                 Right value -> either toParseError Right $
                     parseEither (webhookPayloadParser $ decodeUtf8 eventName) value
 
-    hAction h $ case mbDelivery of
-        Nothing -> Left InvalidRequest
+    pure $ case mbDelivery of
+        Nothing   -> Left InvalidRequest
         Just uuid -> fmap ((,) uuid) res
