@@ -9,6 +9,8 @@ module GitHub.WebHook.Handler
 
 import           Crypto.Hash
 
+import           Control.Applicative
+
 import           Data.Aeson (eitherDecodeStrict')
 import           Data.Aeson.Types (parseEither)
 
@@ -74,7 +76,7 @@ verifySecretKey rawBody sig key = sig == ("sha1=" <> digestToHexByteString
     (hmacGetDigest (hmac (BC8.pack key) rawBody :: HMAC SHA1)))
 
 
-runHandler :: Monad m => Handler m -> m (Either Error (UUID, Payload))
+runHandler :: (Applicative m, Monad m) => Handler m -> m (Either Error (UUID, Payload))
 runHandler h = do
     mbDelivery <- pure . (fromASCIIBytes =<<) =<< hHeader h "X-GitHub-Delivery"
 
